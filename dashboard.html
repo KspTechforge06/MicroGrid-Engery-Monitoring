@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SparkLab Power Monitor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg:       #0b0d11;
+    --surface:  #13161d;
+    --card:     #181c26;
+    --border:   #252b3b;
+    --glow:     #3b82f6;
+    --volt:     #f59e0b;
+    --amp:      #22d3ee;
+    --watt:     #a78bfa;
+    --pf:       #34d399;
+    --danger:   #f87171;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --dim:      #1e2433;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Syne', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Grid noise texture ─────────────────────────────── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      repeating-linear-gradient(0deg, transparent, transparent 39px, var(--border) 39px, var(--border) 40px),
+      repeating-linear-gradient(90deg, transparent, transparent 39px, var(--border) 39px, var(--border) 40px);
+    opacity: 0.2;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px 20px 48px;
+  }
+
+  /* ── Header ─────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 32px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, var(--volt), var(--watt));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+  }
+
+  h1 {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    color: #fff;
+  }
+
+  h1 span {
+    color: var(--volt);
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    box-shadow: 0 0 0 0 transparent;
+    transition: all 0.4s;
+    flex-shrink: 0;
+  }
+
+  .status-dot.live {
+    background: var(--pf);
+    box-shadow: 0 0 8px var(--pf);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  .status-dot.error {
+    background: var(--danger);
+    box-shadow: 0 0 8px var(--danger);
+  }
+
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 4px var(--pf); }
+    50%       { box-shadow: 0 0 12px var(--pf); }
+  }
+
+  #status-text {
+    font-size: 13px;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* IP Config */
+  .ip-form {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px 10px;
+  }
+
+  .ip-form label {
+    font-size: 11px;
+    color: var(--muted);
+    font-family: 'JetBrains Mono', monospace;
+    white-space: nowrap;
+  }
+
+  .ip-form input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--volt);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    width: 140px;
+  }
+
+  .ip-form button {
+    background: var(--dim);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 4px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: 'Syne', sans-serif;
+    transition: background 0.2s;
+  }
+
+  .ip-form button:hover { background: var(--border); }
+
+  /* ── Metric cards ────────────────────────────────────── */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 22px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s, transform 0.2s;
+  }
+
+  .card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent, var(--border));
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent, transparent);
+    border-radius: 16px 16px 0 0;
+  }
+
+  .card-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .card-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 36px;
+    font-weight: 600;
+    color: var(--accent, #fff);
+    line-height: 1;
+    transition: color 0.3s;
+  }
+
+  .card-unit {
+    font-size: 16px;
+    font-weight: 400;
+    color: var(--muted);
+    margin-left: 4px;
+  }
+
+  .card-sub {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 8px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* card color variants */
+  .c-volt  { --accent: var(--volt); }
+  .c-amp   { --accent: var(--amp); }
+  .c-watt  { --accent: var(--watt); }
+  .c-pf    { --accent: var(--pf); }
+  .c-energy { --accent: #fb923c; }
+
+  /* ── Charts ──────────────────────────────────────────── */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  @media (max-width: 700px) {
+    .charts-grid { grid-template-columns: 1fr; }
+  }
+
+  .chart-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 20px 16px;
+  }
+
+  .chart-card.wide {
+    grid-column: 1 / -1;
+  }
+
+  .chart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .chart-title {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .chart-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--dim);
+    color: var(--muted);
+  }
+
+  .chart-wrap {
+    position: relative;
+    height: 180px;
+  }
+
+  .chart-wrap.tall {
+    height: 220px;
+  }
+
+  /* ── Power bar ───────────────────────────────────────── */
+  .pf-bar-wrap {
+    margin-top: 12px;
+  }
+
+  .pf-bar-track {
+    height: 8px;
+    background: var(--dim);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .pf-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--amp), var(--pf));
+    border-radius: 4px;
+    transition: width 0.6s cubic-bezier(.22,.68,0,1.2);
+    width: 0%;
+  }
+
+  .pf-labels {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* ── Footer controls ─────────────────────────────────── */
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 20px;
+  }
+
+  .ctrl-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    padding: 8px 18px;
+    font-size: 13px;
+    font-family: 'Syne', sans-serif;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+  }
+
+  .ctrl-btn:hover { background: var(--dim); border-color: var(--muted); }
+
+  .ctrl-btn.danger { border-color: var(--danger); color: var(--danger); }
+  .ctrl-btn.danger:hover { background: rgba(248, 113, 113, 0.08); }
+
+  .ctrl-btn.active { border-color: var(--pf); color: var(--pf); }
+
+  #last-update {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    margin-left: auto;
+  }
+
+  /* ── Wiring note ─────────────────────────────────────── */
+  .note {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--volt);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.7;
+    margin-top: 20px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .note strong { color: var(--volt); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">⚡</div>
+      <div>
+        <h1>Spark<span>Lab</span> Power Monitor</h1>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="ip-form">
+        <label>ESP IP:</label>
+        <input type="text" id="esp-ip" value="192.168.1.100" placeholder="192.168.x.x">
+        <button onclick="applyIP()">Connect</button>
+      </div>
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Disconnected</span>
+    </div>
+  </header>
+
+  <!-- Metric Cards -->
+  <div class="cards">
+    <div class="card c-volt">
+      <div class="card-label">Voltage (RMS)</div>
+      <div class="card-value" id="v-val">—<span class="card-unit">V</span></div>
+      <div class="card-sub" id="v-sub">AC mains</div>
+    </div>
+    <div class="card c-amp">
+      <div class="card-label">Current (RMS)</div>
+      <div class="card-value" id="i-val">—<span class="card-unit">A</span></div>
+      <div class="card-sub" id="i-sub">via ACS712</div>
+    </div>
+    <div class="card c-watt">
+      <div class="card-label">Active Power</div>
+      <div class="card-value" id="p-val">—<span class="card-unit">W</span></div>
+      <div class="card-sub" id="p-sub">V × I × PF</div>
+    </div>
+    <div class="card c-pf">
+      <div class="card-label">Power Factor</div>
+      <div class="card-value" id="pf-val">—</div>
+      <div class="pf-bar-wrap">
+        <div class="pf-bar-track"><div class="pf-bar-fill" id="pf-bar"></div></div>
+        <div class="pf-labels"><span>0</span><span>0.5</span><span>1.0</span></div>
+      </div>
+    </div>
+    <div class="card c-energy">
+      <div class="card-label">Energy Used</div>
+      <div class="card-value" id="e-val">—<span class="card-unit">Wh</span></div>
+      <div class="card-sub" id="e-sub">session total</div>
+    </div>
+    <div class="card" style="--accent:#6366f1">
+      <div class="card-label">Apparent Power</div>
+      <div class="card-value" id="ap-val">—<span class="card-unit">VA</span></div>
+      <div class="card-sub">S = V × I</div>
+    </div>
+  </div>
+
+  <!-- Charts row 1 -->
+  <div class="charts-grid">
+    <div class="chart-card">
+      <div class="chart-header">
+        <span class="chart-title">Voltage</span>
+        <span class="chart-badge" id="v-badge">— V</span>
+      </div>
+      <div class="chart-wrap"><canvas id="chartV"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-header">
+        <span class="chart-title">Current</span>
+        <span class="chart-badge" id="i-badge">— A</span>
+      </div>
+      <div class="chart-wrap"><canvas id="chartI"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Charts row 2 -->
+  <div class="charts-grid">
+    <div class="chart-card">
+      <div class="chart-header">
+        <span class="chart-title">Active Power</span>
+        <span class="chart-badge" id="p-badge">— W</span>
+      </div>
+      <div class="chart-wrap"><canvas id="chartP"></canvas></div>
+    </div>
+    <div class="chart-card wide">
+      <div class="chart-header">
+        <span class="chart-title">Energy Accumulation</span>
+        <span class="chart-badge" id="e-badge">— Wh</span>
+      </div>
+      <div class="chart-wrap tall"><canvas id="chartE"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button class="ctrl-btn active" id="btn-pause" onclick="togglePause()">⏸ Pause</button>
+    <button class="ctrl-btn danger" onclick="resetEnergy()">↺ Reset Energy</button>
+    <button class="ctrl-btn" onclick="exportCSV()">↓ Export CSV</button>
+    <span id="last-update">Last update: —</span>
+  </div>
+
+  <!-- Wiring note -->
+  <div class="note">
+    <strong>⚡ Setup note:</strong> Edit ESP IP above to match your NodeMCU's address (shown in Serial Monitor after boot).<br>
+    <strong>Calibration:</strong> Adjust <code>VCAL_FACTOR</code> in the .ino until Vrms matches your multimeter reading.<br>
+    <strong>Current sensor:</strong> ACS712 demo mode active by default — wire ACS712 to A0 and uncomment the real read function.<br>
+    <strong>CORS:</strong> The ESP firmware sends <code>Access-Control-Allow-Origin: *</code> so this page can fetch data from any host.
+  </div>
+
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────
+let ESP_IP = '192.168.1.100';
+let FETCH_INTERVAL = 1000;  // ms
+let paused = false;
+let fetchTimer = null;
+
+const MAX_POINTS = 60;  // last 60 readings (~60 seconds at 1Hz)
+
+// ── History buffers ───────────────────────────────────────────
+let history = { ts: [], v: [], i: [], p: [], e: [] };
+
+// ── Chart instances ───────────────────────────────────────────
+const chartDefs = [
+  { id: 'chartV', key: 'v', label: 'Voltage (V)',  color: '#f59e0b', fill: 'rgba(245,158,11,0.08)' },
+  { id: 'chartI', key: 'i', label: 'Current (A)',  color: '#22d3ee', fill: 'rgba(34,211,238,0.08)' },
+  { id: 'chartP', key: 'p', label: 'Power (W)',    color: '#a78bfa', fill: 'rgba(167,139,250,0.08)' },
+  { id: 'chartE', key: 'e', label: 'Energy (Wh)',  color: '#fb923c', fill: 'rgba(251,146,60,0.08)' },
+];
+
+const charts = {};
+
+function makeChart(def) {
+  const ctx = document.getElementById(def.id).getContext('2d');
+  return new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: def.label,
+        data: [],
+        borderColor: def.color,
+        backgroundColor: def.fill,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        tension: 0.4,
+        fill: true,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#181c26',
+          borderColor: '#252b3b',
+          borderWidth: 1,
+          titleColor: '#94a3b8',
+          bodyColor: def.color,
+          padding: 10,
+          callbacks: {
+            label: ctx => ` ${ctx.parsed.y.toFixed(3)} ${def.label.split('(')[1]?.replace(')', '') || ''}`,
+          }
+        }
+      },
+      scales: {
+        x: {
+          display: false,
+          grid: { display: false },
+        },
+        y: {
+          grid: { color: 'rgba(37,43,59,0.8)', lineWidth: 0.5 },
+          ticks: {
+            color: '#64748b',
+            font: { family: 'JetBrains Mono', size: 10 },
+            maxTicksLimit: 5,
+          },
+          border: { display: false },
+        }
+      }
+    }
+  });
+}
+
+chartDefs.forEach(def => { charts[def.key] = makeChart(def); });
+
+// ── Fetch & update ────────────────────────────────────────────
+async function fetchData() {
+  if (paused) return;
+  const url = `http://${ESP_IP}/data`;
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(2000) });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const d = await resp.json();
+    updateUI(d);
+    setStatus('live', `Live · ${ESP_IP}`);
+  } catch(e) {
+    setStatus('error', 'No data · check IP');
+  }
+}
+
+function updateUI(d) {
+  // Cards
+  setText('v-val',  d.voltage.toFixed(1) + '<span class="card-unit">V</span>');
+  setText('i-val',  d.current.toFixed(3) + '<span class="card-unit">A</span>');
+  setText('p-val',  d.power.toFixed(1)   + '<span class="card-unit">W</span>');
+  setText('pf-val', d.pf.toFixed(2));
+  setText('e-val',  d.energy.toFixed(2)  + '<span class="card-unit">Wh</span>');
+  setText('ap-val', d.apparent.toFixed(1)+ '<span class="card-unit">VA</span>');
+
+  // Sub labels
+  setText('v-sub',  d.voltage > 200 ? '✓ Normal mains' : '⚠ Low voltage');
+  setText('i-sub',  d.current > 0.01 ? 'Load detected' : 'No load');
+  setText('p-sub',  `${d.power.toFixed(1)} W · ${(d.power/1000).toFixed(3)} kW`);
+  setText('e-sub',  `≈ ₹${(d.energy/1000 * 8).toFixed(4)} (₹8/kWh)`);
+
+  // PF bar
+  document.getElementById('pf-bar').style.width = (d.pf * 100) + '%';
+
+  // Badges
+  document.getElementById('v-badge').textContent = d.voltage.toFixed(1) + ' V';
+  document.getElementById('i-badge').textContent = d.current.toFixed(3) + ' A';
+  document.getElementById('p-badge').textContent = d.power.toFixed(1) + ' W';
+  document.getElementById('e-badge').textContent = d.energy.toFixed(2) + ' Wh';
+
+  // History
+  const label = new Date().toLocaleTimeString();
+  push('ts', label); push('v', d.voltage); push('i', d.current);
+  push('p', d.power); push('e', d.energy);
+
+  // Update charts
+  chartDefs.forEach(def => {
+    const c = charts[def.key];
+    c.data.labels = [...history.ts];
+    c.data.datasets[0].data = [...history[def.key]];
+    c.update('none');
+  });
+
+  document.getElementById('last-update').textContent =
+    'Last update: ' + new Date().toLocaleTimeString();
+
+  // Export buffer
+  window._csvData = window._csvData || [['Time','Voltage(V)','Current(A)','Power(W)','PF','Energy(Wh)','Apparent(VA)']];
+  window._csvData.push([label, d.voltage, d.current, d.power, d.pf, d.energy, d.apparent]);
+}
+
+function push(key, val) {
+  history[key].push(val);
+  if (history[key].length > MAX_POINTS) history[key].shift();
+}
+
+function setText(id, html) {
+  document.getElementById(id).innerHTML = html;
+}
+
+// ── Status ────────────────────────────────────────────────────
+function setStatus(state, msg) {
+  const dot = document.getElementById('status-dot');
+  dot.className = 'status-dot ' + state;
+  document.getElementById('status-text').textContent = msg;
+}
+
+// ── Controls ──────────────────────────────────────────────────
+function applyIP() {
+  ESP_IP = document.getElementById('esp-ip').value.trim();
+  setStatus('', 'Connecting…');
+  fetchData();
+}
+
+function togglePause() {
+  paused = !paused;
+  const btn = document.getElementById('btn-pause');
+  btn.textContent = paused ? '▶ Resume' : '⏸ Pause';
+  btn.className = paused ? 'ctrl-btn' : 'ctrl-btn active';
+}
+
+async function resetEnergy() {
+  try {
+    await fetch(`http://${ESP_IP}/reset`);
+  } catch(e) {}
+  window._csvData = null;
+}
+
+function exportCSV() {
+  if (!window._csvData || window._csvData.length < 2) {
+    alert('No data yet — wait for some readings first.'); return;
+  }
+  const csv = window._csvData.map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'sparklab_power_' + Date.now() + '.csv';
+  a.click();
+}
+
+// ── Demo mode (simulate data if no ESP connected) ─────────────
+let demoT = 0;
+function demoTick() {
+  if (paused) return;
+  demoT += 0.1;
+  const v = 230 + 3 * Math.sin(demoT * 0.7) + (Math.random() - 0.5);
+  const i = 0.45 + 0.05 * Math.sin(demoT * 1.3) + (Math.random() - 0.5) * 0.02;
+  const pf = 0.92 + 0.03 * Math.sin(demoT * 0.4);
+  const p = v * i * pf;
+  const ap = v * i;
+  const e = (window._lastE || 0) + p / 3600;
+  window._lastE = e;
+  updateUI({ voltage: v, current: i, power: p, pf: Math.min(1, pf), energy: e, apparent: ap });
+  setStatus('live', `Demo mode · no ESP connected`);
+}
+
+// Start — try real ESP first, fall back to demo
+function startPolling() {
+  fetchTimer = setInterval(async () => {
+    if (paused) return;
+    try {
+      const resp = await fetch(`http://${ESP_IP}/data`, { signal: AbortSignal.timeout(1500) });
+      if (!resp.ok) throw new Error();
+      const d = await resp.json();
+      updateUI(d);
+      setStatus('live', `Live · ${ESP_IP}`);
+    } catch(e) {
+      // Fall back to demo
+      demoTick();
+    }
+  }, FETCH_INTERVAL);
+}
+
+// Kick off
+document.getElementById('esp-ip').addEventListener('keydown', e => {
+  if (e.key === 'Enter') applyIP();
+});
+
+startPolling();
+</script>
+</body>
+</html>
